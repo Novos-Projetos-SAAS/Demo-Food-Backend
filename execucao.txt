@@ -1,0 +1,136 @@
+npm install knex --save
+npm install pg
+npx knex init
+npx gitignore node
+npm install jsonwebtoken 
+npm install bcryptjs
+npm install express
+npm install nodemon
+npm install cookies-parser'
+npm install chalk log-symbols
+npm install swagger-ui-express swagger-jsdoc
+npm install express-rate-limit
+npm install socket.io
+
+(implementar token bucket com redis)
+
+
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+
+criar migration: npx knex migrate:make 'nome_da_migratio'
+rodar migration: npx knex migrate:latest
+
+criar seed: npx knex seed:make 'nome_do_seed'
+rodar seed: npx knex seed:run
+npx knex seed:run --specific='vincular_permissoes_ao_admin.js'
+
+npx knex migrate:rollback --all
+npx knex migrate:latest
+npx knex seed:run
+
+
+rate-limit 
+helmet
+bcrypt
+jwt
+cors
+resend
+
+
+migration
+
+seeds
+Seeds de Banco de Dados
+Seeds (Sementes) são scripts automatizados responsáveis por popular o banco de dados com dados iniciais ou de teste. Enquanto as Migrations cuidam da "planta" (estrutura), os Seeds cuidam do "recheio" (conteúdo).
+
+1. Objetivo Principal
+O propósito do Seeding é garantir que a aplicação tenha um estado inicial funcional. Sem os seeds, após rodar as migrations, o banco estaria vazio e o sistema poderia nem permitir o login (por falta de níveis de acesso cadastrados, por exemplo).
+
+2. Principais Utilidades
+Configurações de Sistema: Insere dados obrigatórios que não mudam com frequência, como Níveis de Acesso (Admin, Atendente), Formas de Pagamento e Categorias de Alimentos.
+
+Padronização da Equipe: Garante que todos os desenvolvedores do projeto (você e seus colegas) trabalhem com a mesma base de dados de teste.
+
+Agilidade no Desenvolvimento: Evita a tarefa repetitiva e manual de cadastrar itens toda vez que o banco de dados for resetado ou recriado.
+
+3. Diferenças Fundamentais
+Migrations: Definem as tabelas e colunas (Ex: CREATE TABLE usuarios). São o "esqueleto".
+
+Seeds: Definem os registros e valores (Ex: INSERT INTO usuarios). São a "vida" do sistema.
+
+4. Boas Práticas
+Idempotência: Scripts de seed geralmente limpam a tabela antes de inserir os dados para evitar registros duplicados caso o comando seja executado mais de uma vez.
+
+Ambientes: Podem ser usados para inserir dados reais em produção (apenas configurações básicas) ou dados "fictícios" em desenvolvimento (para testar o layout da dashboard).
+
+
+
+
+usuarios
+{
+    "email": "nei@teste.com",
+    "senha": "Senhaforte123@"
+}
+
+{
+    "nome": "Nei",
+    "email": "nei@teste.com",
+    "senha": "Senhaforte456@",
+    "nivel_acesso_id": 2
+}
+
+
+{
+    "email": "elton@teste.com",
+    "senha": "Senhaforte456@"
+}
+
+{
+    "nome": "Elton",
+    "email": "elton@teste.com",
+    "senha": "Senhaforte456@",
+    "nivel_acesso_id": 2
+}
+
+{
+    "email": "maria@teste.com",
+    "senha": "Senhaforte789@"
+}
+
+{
+    "nome": "Maria",
+    "email": "maria@teste.com",
+    "senha": "Senhaforte789@",
+    "nivel_acesso_id": 2
+}
+
+
+
+{
+    "nome_cliente": "João Silva",
+    "telefone_cliente": "11999999999",
+    "endereco_cliente": "Rua das Marmitas, 123",
+    "tipo_pedido": "Remoto",
+    "metodo_pagamento_id": 1,
+    "marmitas": [
+        {
+            "tamanho_id": 1,
+            "quantidade": 2,
+            "alimentos": [7, 8, 9] 
+        }
+    ]
+}
+
+
+
+NODE_ENV=
+PORT=
+ALLOWED_ORIGINS=
+JWT_SECRET=
+DB_HOST=
+DB_PORT=
+DB_USER=
+DB_PASSWORD=
+DB_NAME=
+
+rodar seeds direto na nuvem: $env:NODE_ENV="production"; npx knex seed:run 9tem que colocar a database_url no .env
