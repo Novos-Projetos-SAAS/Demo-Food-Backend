@@ -14,6 +14,7 @@ import {
 } from "../utils/pedidosUtils.js";
 
 export const criarPedido = async (req, res, next) => {
+   
     let trx;
 
     try {
@@ -99,6 +100,7 @@ export const criarPedido = async (req, res, next) => {
                 troco_para: valorTrocoNumerico,
             })
             .returning("*");
+
 
         const totalMarmitasCentavos = await inserirMarmitasPedido({ pedidoId: pedido.id, marmitas, trx });
         const totalProdutosCentavos = await inserirProdutosPedido({ pedidoId: pedido.id, produtos, trx, exigirPrecoReferencia: !req.usuario });
