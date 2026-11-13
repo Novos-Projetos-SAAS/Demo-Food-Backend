@@ -1,6 +1,12 @@
 import connection from "../database/connection.js";
 import { lancarErro } from "../utils/errorUtils.js";
 import {
+    buscarPedidoPorChave,
+    calcularHashPedido,
+    chavePedidoValida,
+    responderPedidoExistente
+} from "../utils/idempotenciaPedido.js";
+import {
     buscarPedidoCompletoPorId,
     calcularTotalPedido,
     deCentavos,
@@ -13,11 +19,30 @@ import {
     validarMetodoPagamento
 } from "../utils/pedidosUtils.js";
 
+
 export const criarPedido = async (req, res, next) => {
-   
     let trx;
 
     try {
+        // ==========================================
+        // 1. PROTEÇÃO CONTRA PEDIDOS DUPLICADOS
+        // ==========================================
+
+        const chaveIdempotencia = req.body?.idempotency_key;
+
+        if (!chavePedidoValida(chaveIdempotencia)) {
+            lancarErro(
+                "Identificador de confirmação inválido. Atualize a página antes de enviar o pedido.",
+                400
+            );
+        }
+
+        const hashRequisicao = calcularHashPedido(req.body);
+
+        // ==========================================
+        // 2. RECEBIMENTO DOS DADOS
+        // ==========================================
+
         let {
             nome_cliente,
             telefone_cliente,
@@ -29,60 +54,151 @@ export const criarPedido = async (req, res, next) => {
             precisa_troco = false,
             troco_para = null,
             marmitas = [],
+            marmitas_especiais = [],
             produtos = []
         } = req.body || {};
 
-        const observacoesFormatadas = observacoes === null || observacoes === undefined ? null : String(observacoes).trim() || null;
+        // ==========================================
+        // 3. VALIDAÇÃO DAS OBSERVAÇÕES
+        // ==========================================
 
-        if (observacoesFormatadas && observacoesFormatadas.length > 60) {
-            lancarErro("As observações do pedido devem possuir no máximo 60 caracteres.", 400);
+        const observacoesFormatadas =
+            observacoes === null || observacoes === undefined
+                ? null
+                : String(observacoes).trim() || null;
+
+        if (
+            observacoesFormatadas &&
+            observacoesFormatadas.length > 60
+        ) {
+            lancarErro(
+                "As observações do pedido devem possuir no máximo 60 caracteres.",
+                400
+            );
         }
 
-        // const valorTrocoNumerico = precisa_troco && troco_para !== null && troco_para !== undefined && String(troco_para).trim() !== '' ? Number(troco_para) : null;
+        // ==========================================
+        // 4. VALIDAÇÃO DO TROCO
+        // ==========================================
 
-        // if (precisa_troco && (!Number.isFinite(valorTrocoNumerico) || valorTrocoNumerico <= 0)) {
-        //     lancarErro("Informe um valor válido para o troco.", 400);
-        // }
+        const trocoOriginal =
+            troco_para !== null && troco_para !== undefined
+                ? String(troco_para).trim()
+                : "";
 
-        const trocoOriginal = troco_para !== null && troco_para !== undefined ? String(troco_para).trim() : '';
-
-        const valorTrocoNumerico = precisa_troco && trocoOriginal !== '' ? Number(trocoOriginal.replace(',', '.')) : null;
+        const valorTrocoNumerico =
+            precisa_troco && trocoOriginal !== ""
+                ? Number(trocoOriginal.replace(",", "."))
+                : null;
 
         if (precisa_troco) {
-            const totalDigitosTroco = trocoOriginal.replace(/\D/g, '').length;
+            const totalDigitosTroco =
+                trocoOriginal.replace(/\D/g, "").length;
 
-            if (totalDigitosTroco === 0 || totalDigitosTroco > 7) {
-                lancarErro("O valor do troco deve possuir no máximo 7 dígitos.", 400);
+            if (
+                totalDigitosTroco === 0 ||
+                totalDigitosTroco > 7
+            ) {
+                lancarErro(
+                    "O valor do troco deve possuir no máximo 7 dígitos.",
+                    400
+                );
             }
 
-            if (!Number.isFinite(valorTrocoNumerico) || valorTrocoNumerico <= 0) {
-                lancarErro("Informe um valor válido para o troco.", 400);
+            if (
+                !Number.isFinite(valorTrocoNumerico) ||
+                valorTrocoNumerico <= 0
+            ) {
+                lancarErro(
+                    "Informe um valor válido para o troco.",
+                    400
+                );
             }
         }
 
-        if (!Array.isArray(marmitas) || !Array.isArray(produtos)) {
-            lancarErro("Marmitas e produtos devem ser enviados como listas.", 400);
+        // ==========================================
+        // 5. VALIDAÇÃO DOS ITENS
+        // ==========================================
+
+        if (
+            !Array.isArray(marmitas) ||
+            !Array.isArray(marmitas_especiais) ||
+            !Array.isArray(produtos)
+        ) {
+            lancarErro(
+                "Marmitas, marmitas especiais e produtos devem ser enviados como listas.",
+                400
+            );
         }
 
-        if (marmitas.length === 0) {
-            lancarErro("Para finalizar o pedido é obrigatório adicionar pelo menos uma marmita com alimentos.", 400);
+        if (
+            marmitas.length === 0 &&
+            marmitas_especiais.length === 0
+        ) {
+            lancarErro(
+                "Para finalizar o pedido é obrigatório adicionar pelo menos uma marmita.",
+                400
+            );
         }
+
+        // ==========================================
+        // 6. VALIDAÇÃO DA ENTREGA
+        // ==========================================
 
         telefone_cliente = normalizarTelefone(telefone_cliente);
 
-        if (metodo_entrega === "Entrega" && (!endereco_cliente || String(endereco_cliente).trim() === "")) {
-            lancarErro("O endereço é obrigatório para pedidos com entrega.", 400);
+        if (
+            metodo_entrega === "Entrega" &&
+            (
+                !endereco_cliente ||
+                String(endereco_cliente).trim() === ""
+            )
+        ) {
+            lancarErro(
+                "O endereço é obrigatório para pedidos com entrega.",
+                400
+            );
         }
 
-        const enderecoFinal = metodo_entrega === "Retirada"
-            ? null
-            : String(endereco_cliente || "").trim() || null;
+        const enderecoFinal =
+            metodo_entrega === "Retirada"
+                ? null
+                : String(endereco_cliente || "").trim() || null;
+
+        // ==========================================
+        // 7. VERIFICAR SE O PEDIDO JÁ EXISTE
+        // ==========================================
+
+        // Se a primeira requisição foi concluída, mas
+        // a internet caiu antes de receber a resposta,
+        // devolvemos o pedido original.
+
+        const pedidoExistente = await buscarPedidoPorChave(
+            connection,
+            chaveIdempotencia
+        );
+
+        if (pedidoExistente) {
+            return responderPedidoExistente(
+                res,
+                pedidoExistente,
+                hashRequisicao
+            );
+        }
+
+        // ==========================================
+        // 8. INICIAR TRANSAÇÃO
+        // ==========================================
 
         trx = await connection.transaction();
 
-        // Revalida as regras críticas no momento exato da criação do pedido.
+        // Revalida as regras críticas antes da criação.
         await validarLojaAberta(trx);
         await validarMetodoPagamento(metodo_pagamento_id, trx);
+
+        // ==========================================
+        // 9. CRIAR PEDIDO
+        // ==========================================
 
         const [pedido] = await connection("pedidos")
             .transacting(trx)
@@ -95,28 +211,94 @@ export const criarPedido = async (req, res, next) => {
                 metodo_pagamento_id,
                 status: "Pendente",
                 valor_total: 0,
+
+                // Identificação da tentativa de compra
+                chave_idempotencia: chaveIdempotencia,
+                hash_requisicao: hashRequisicao,
+
                 observacoes: observacoesFormatadas,
                 precisa_troco: Boolean(precisa_troco),
-                troco_para: valorTrocoNumerico,
+                troco_para: valorTrocoNumerico
             })
             .returning("*");
 
+        // ==========================================
+        // 10. INSERIR MARMITAS
+        // ==========================================
 
-        const totalMarmitasCentavos = await inserirMarmitasPedido({ pedidoId: pedido.id, marmitas, trx });
-        const totalProdutosCentavos = await inserirProdutosPedido({ pedidoId: pedido.id, produtos, trx, exigirPrecoReferencia: !req.usuario });
-        const valorTotalCentavos = totalMarmitasCentavos + totalProdutosCentavos;
-        const valorTotalPedido = deCentavos(valorTotalCentavos);
+        const totalMarmitasCentavos =
+            await inserirMarmitasPedido({
+                pedidoId: pedido.id,
+                marmitas,
+                trx
+            });
 
-        if (Boolean(precisa_troco) && valorTrocoNumerico !== null) {
+        // ==========================================
+        // 11. INSERIR MARMITAS ESPECIAIS
+        // ==========================================
+
+        const totalMarmitasEspeciaisCentavos =
+            await inserirMarmitasEspeciaisPedido({
+                pedidoId: pedido.id,
+                marmitasEspeciais: marmitas_especiais,
+                trx,
+                exigirPrecoReferencia: !req.usuario
+            });
+
+        // ==========================================
+        // 12. INSERIR PRODUTOS
+        // ==========================================
+
+        const totalProdutosCentavos =
+            await inserirProdutosPedido({
+                pedidoId: pedido.id,
+                produtos,
+                trx,
+                exigirPrecoReferencia: !req.usuario
+            });
+
+        // ==========================================
+        // 13. CALCULAR VALOR TOTAL
+        // ==========================================
+
+        const valorTotalCentavos =
+            totalMarmitasCentavos +
+            totalMarmitasEspeciaisCentavos +
+            totalProdutosCentavos;
+
+        const valorTotalPedido =
+            deCentavos(valorTotalCentavos);
+
+        // ==========================================
+        // 14. VALIDAR VALOR DO TROCO
+        // ==========================================
+
+        if (
+            Boolean(precisa_troco) &&
+            valorTrocoNumerico !== null
+        ) {
             if (valorTrocoNumerico <= valorTotalPedido) {
-                lancarErro(`O valor para troco (R$ ${valorTrocoNumerico.toFixed(2)}) deve ser maior que o total do pedido (R$ ${valorTotalPedido.toFixed(2)}).`, 400);
+                lancarErro(
+                    `O valor para troco (R$ ${valorTrocoNumerico.toFixed(2)}) deve ser maior que o total do pedido (R$ ${valorTotalPedido.toFixed(2)}).`,
+                    400
+                );
             }
         }
+
+        // ==========================================
+        // 15. ATUALIZAR TOTAL DO PEDIDO
+        // ==========================================
 
         await connection("pedidos")
             .transacting(trx)
             .where({ id: pedido.id })
-            .update({ valor_total: valorTotalPedido });
+            .update({
+                valor_total: valorTotalPedido
+            });
+
+        // ==========================================
+        // 16. REGISTRAR LOG
+        // ==========================================
 
         await connection("logs")
             .transacting(trx)
@@ -126,46 +308,136 @@ export const criarPedido = async (req, res, next) => {
                 metodo: req.method,
                 endpoint: req.originalUrl,
                 acao: "PEDIDO.CRIAR",
-                descricao: `Pedido #${pedido.id} para ${nome_cliente}. Total: R$ ${valorTotalPedido.toFixed(2)}`,
+                descricao:
+                    `Pedido #${pedido.id} para ${nome_cliente}. ` +
+                    `Total: R$ ${valorTotalPedido.toFixed(2)}`,
                 payload: JSON.stringify({
                     pedido_id: pedido.id,
                     total: valorTotalPedido,
-                    total_marmitas: deCentavos(totalMarmitasCentavos),
-                    total_produtos: deCentavos(totalProdutosCentavos),
-                    quantidade_marmitas: marmitas.length,
-                    quantidade_produtos: produtos.reduce((total, produto) => total + Number(produto?.quantidade || 0), 0)
+
+                    total_marmitas:
+                        deCentavos(totalMarmitasCentavos),
+
+                    total_marmitas_especiais:
+                        deCentavos(totalMarmitasEspeciaisCentavos),
+
+                    total_produtos:
+                        deCentavos(totalProdutosCentavos),
+
+                    quantidade_marmitas: marmitas.reduce(
+                        (total, marmita) =>
+                            total + Number(marmita?.quantidade || 0),
+                        0
+                    ),
+
+                    quantidade_marmitas_especiais:
+                        marmitas_especiais.reduce(
+                            (total, marmita) =>
+                                total + Number(marmita?.quantidade || 0),
+                            0
+                        ),
+
+                    quantidade_produtos: produtos.reduce(
+                        (total, produto) =>
+                            total + Number(produto?.quantidade || 0),
+                        0
+                    )
                 })
             });
 
+        // ==========================================
+        // 17. CONFIRMAR TRANSAÇÃO
+        // ==========================================
+
         await trx.commit();
 
-        // O pedido já está confirmado no banco. A falha do Socket não pode invalidar a criação nem induzir o cliente a reenviar o pedido.
+        // ==========================================
+        // 18. NOTIFICAR ADMINISTRADOR
+        // ==========================================
+
+        // Somente pedidos novos chegam até aqui.
+        // Pedidos reutilizados não disparam outro Socket.
+
         try {
-            const pedidoCompleto = await buscarPedidoCompletoPorId(pedido.id);
+            const pedidoCompleto =
+                await buscarPedidoCompletoPorId(pedido.id);
 
             if (global.io && pedidoCompleto) {
-                global.io.to("pedidos").emit("novo_pedido_recebido", pedidoCompleto);
+                global.io
+                    .to("pedidos")
+                    .emit("novo_pedido_recebido", pedidoCompleto);
             }
         } catch (socketError) {
-            console.error(`Erro ao emitir o pedido #${pedido.id} pelo Socket.IO:`, socketError);
+            console.error(
+                `Erro ao emitir o pedido #${pedido.id} pelo Socket.IO:`,
+                socketError
+            );
         }
+
+        // ==========================================
+        // 19. RETORNAR PEDIDO CRIADO
+        // ==========================================
 
         return res.status(201).json({
             status: "success",
             data: {
                 pedido_id: pedido.id,
                 total: valorTotalPedido,
-                total_marmitas: deCentavos(totalMarmitasCentavos),
-                total_produtos: deCentavos(totalProdutosCentavos)
+                total_marmitas:
+                    deCentavos(totalMarmitasCentavos),
+                total_marmitas_especiais:
+                    deCentavos(totalMarmitasEspeciaisCentavos),
+                total_produtos:
+                    deCentavos(totalProdutosCentavos)
             }
         });
+
     } catch (error) {
+
+        // ==========================================
+        // 20. DESFAZER TRANSAÇÃO EM CASO DE ERRO
+        // ==========================================
+
         if (trx && !trx.isCompleted()) {
             await trx.rollback();
         }
-        next(error);
+
+        // ==========================================
+        // 21. TRATAR REQUISIÇÕES SIMULTÂNEAS
+        // ==========================================
+
+        // PostgreSQL 23505 = violação de UNIQUE.
+        // Se duas requisições chegarem juntas, uma
+        // cria o pedido; a outra recupera o mesmo pedido.
+
+        if (
+            error.code === "23505" &&
+            error.constraint ===
+            "pedidos_chave_idempotencia_unica"
+        ) {
+            try {
+                const pedidoExistente =
+                    await buscarPedidoPorChave(
+                        connection,
+                        req.body.idempotency_key
+                    );
+
+                if (pedidoExistente) {
+                    return responderPedidoExistente(
+                        res,
+                        pedidoExistente,
+                        calcularHashPedido(req.body)
+                    );
+                }
+            } catch (erroConsulta) {
+                return next(erroConsulta);
+            }
+        }
+
+        return next(error);
     }
 };
+
 
 export const editarPedido = async (req, res, next) => {
     let trx;
