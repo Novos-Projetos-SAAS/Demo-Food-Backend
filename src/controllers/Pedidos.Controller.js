@@ -131,12 +131,18 @@ export const criarPedido = async (req, res, next) => {
             );
         }
 
-        if (
-            marmitas.length === 0 &&
-            marmitas_especiais.length === 0
-        ) {
+        // Esta versão Demo só possui inserção de marmitas personalizadas.
+        // Não ignorar silenciosamente itens que o backend não sabe gravar.
+        if (marmitas_especiais.length > 0) {
             lancarErro(
-                "Para finalizar o pedido é obrigatório adicionar pelo menos uma marmita.",
+                "Marmitas especiais não estão disponíveis nesta versão do sistema.",
+                400
+            );
+        }
+
+        if (marmitas.length === 0) {
+            lancarErro(
+                "Para finalizar o pedido é obrigatório adicionar pelo menos uma marmita com alimentos.",
                 400
             );
         }
@@ -234,19 +240,7 @@ export const criarPedido = async (req, res, next) => {
             });
 
         // ==========================================
-        // 11. INSERIR MARMITAS ESPECIAIS
-        // ==========================================
-
-        const totalMarmitasEspeciaisCentavos =
-            await inserirMarmitasEspeciaisPedido({
-                pedidoId: pedido.id,
-                marmitasEspeciais: marmitas_especiais,
-                trx,
-                exigirPrecoReferencia: !req.usuario
-            });
-
-        // ==========================================
-        // 12. INSERIR PRODUTOS
+        // 11. INSERIR PRODUTOS
         // ==========================================
 
         const totalProdutosCentavos =
@@ -258,19 +252,18 @@ export const criarPedido = async (req, res, next) => {
             });
 
         // ==========================================
-        // 13. CALCULAR VALOR TOTAL
+        // 12. CALCULAR VALOR TOTAL
         // ==========================================
 
         const valorTotalCentavos =
             totalMarmitasCentavos +
-            totalMarmitasEspeciaisCentavos +
             totalProdutosCentavos;
 
         const valorTotalPedido =
             deCentavos(valorTotalCentavos);
 
         // ==========================================
-        // 14. VALIDAR VALOR DO TROCO
+        // 13. VALIDAR VALOR DO TROCO
         // ==========================================
 
         if (
@@ -286,7 +279,7 @@ export const criarPedido = async (req, res, next) => {
         }
 
         // ==========================================
-        // 15. ATUALIZAR TOTAL DO PEDIDO
+        // 14. ATUALIZAR TOTAL DO PEDIDO
         // ==========================================
 
         await connection("pedidos")
@@ -297,7 +290,7 @@ export const criarPedido = async (req, res, next) => {
             });
 
         // ==========================================
-        // 16. REGISTRAR LOG
+        // 15. REGISTRAR LOG
         // ==========================================
 
         await connection("logs")
@@ -318,9 +311,6 @@ export const criarPedido = async (req, res, next) => {
                     total_marmitas:
                         deCentavos(totalMarmitasCentavos),
 
-                    total_marmitas_especiais:
-                        deCentavos(totalMarmitasEspeciaisCentavos),
-
                     total_produtos:
                         deCentavos(totalProdutosCentavos),
 
@@ -329,13 +319,6 @@ export const criarPedido = async (req, res, next) => {
                             total + Number(marmita?.quantidade || 0),
                         0
                     ),
-
-                    quantidade_marmitas_especiais:
-                        marmitas_especiais.reduce(
-                            (total, marmita) =>
-                                total + Number(marmita?.quantidade || 0),
-                            0
-                        ),
 
                     quantidade_produtos: produtos.reduce(
                         (total, produto) =>
@@ -346,13 +329,13 @@ export const criarPedido = async (req, res, next) => {
             });
 
         // ==========================================
-        // 17. CONFIRMAR TRANSAÇÃO
+        // 16. CONFIRMAR TRANSAÇÃO
         // ==========================================
 
         await trx.commit();
 
         // ==========================================
-        // 18. NOTIFICAR ADMINISTRADOR
+        // 17. NOTIFICAR ADMINISTRADOR
         // ==========================================
 
         // Somente pedidos novos chegam até aqui.
@@ -375,7 +358,7 @@ export const criarPedido = async (req, res, next) => {
         }
 
         // ==========================================
-        // 19. RETORNAR PEDIDO CRIADO
+        // 18. RETORNAR PEDIDO CRIADO
         // ==========================================
 
         return res.status(201).json({
@@ -385,8 +368,6 @@ export const criarPedido = async (req, res, next) => {
                 total: valorTotalPedido,
                 total_marmitas:
                     deCentavos(totalMarmitasCentavos),
-                total_marmitas_especiais:
-                    deCentavos(totalMarmitasEspeciaisCentavos),
                 total_produtos:
                     deCentavos(totalProdutosCentavos)
             }
@@ -395,7 +376,7 @@ export const criarPedido = async (req, res, next) => {
     } catch (error) {
 
         // ==========================================
-        // 20. DESFAZER TRANSAÇÃO EM CASO DE ERRO
+        // 19. DESFAZER TRANSAÇÃO EM CASO DE ERRO
         // ==========================================
 
         if (trx && !trx.isCompleted()) {
@@ -403,7 +384,7 @@ export const criarPedido = async (req, res, next) => {
         }
 
         // ==========================================
-        // 21. TRATAR REQUISIÇÕES SIMULTÂNEAS
+        // 20. TRATAR REQUISIÇÕES SIMULTÂNEAS
         // ==========================================
 
         // PostgreSQL 23505 = violação de UNIQUE.
